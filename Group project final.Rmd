@@ -1,0 +1,307 @@
+---
+title: "Exploring the real estate market"
+author: "Jiaxun Li/Yuchun Wu/Ziqi Zhao/Selena Li"
+date: "12/16/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(dplyr)
+library(corrplot)
+library(rpart)
+library(rpart.plot)
+library(tidymodels)
+library(leaps)
+library(tree)
+```
+
+```{r,echo=FALSE}
+train <- read.csv("housing_train.csv")
+test <- read.csv("housing_test.csv")
+target <- read.csv("sample_submission.csv")
+data.test <- mutate(test,target)
+data <- rbind(train, data.test)
+drop <- c("Id")
+data = data[,!(names(data) %in% drop)]
+data_dropna <- data[, colMeans(is.na(data)) <= 0]
+numericvars <- which(sapply(data_dropna, is.numeric))
+
+numericvars <- data_dropna[, numericvars]
+
+#Find !numeric variables
+numericnames <- names(numericvars)
+factorvars <- data_dropna[, !names(data_dropna) %in% numericnames]
+factornames <- names(factorvars)
+factornames <- append(factornames, "SalePrice")
+
+factorvars <- data_dropna[, names(data_dropna) %in% factornames]
+
+#use 80% of data set as training set and 20% as test set
+set.seed(1)
+sample.num <- sample(c(TRUE, FALSE), nrow(numericvars), replace=TRUE, prob=c(0.8,0.2))
+set.seed(1)
+sample.fac <- sample(c(TRUE, FALSE), nrow(factorvars), replace=TRUE, prob=c(0.8,0.2))
+
+num.train  <- numericvars[sample.num, ]
+num.test   <- numericvars[!sample.num, ]
+
+fac.train  <- factorvars[sample.fac, ]
+fac.test   <- factorvars[!sample.fac, ]
+
+```
+
+# Introduction
+Our group members are really interested in the real estate market, and all members tried their best in order to create a decent report in this area.
+
+House styles are an important aspect of the real estate market, as they can have a significant impact on the value of a property and the appeal it holds for potential buyers. They can also be an important factor in determining the sale price of a property. It can be challenging for people to find the right price to purchase a house, especially if they are not familiar with the local real estate market or if they are unfamiliar with the various factors that can affect the value of a property. Building a model for reference can be a helpful way to provide guidance and support to people who are trying to find the right price to purchase a house. In this analysis, we will explore the various house styles that are popular among different segments of the population, examining factors such as the features and amenities that are most important to people,  and the trends and changes that have occurred over time. By gaining a deeper understanding of the value that different house styles hold for people, we can better understand the forces that shape the housing market and make informed decisions about how to navigate it successfully.
+
+# About The Data
+
+URL:(https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/overview)
+
+## Data Description
+
+The dataset we use is The Ames Housing Data. The dataset contains 80 variables directly related to the sale of a property and a target value, SalePrice. These 80 variables focus on the types of information that a typical home buyer would like to know about a house. (e.g., when it was built, Heating quality, how many bathrooms it has.) It contains 20 continuous variables related to the various size dimensions of the house. In addition to the basic house size, others include more specific areas such as the basement, porches, etc. The dataset also contains 14 discrete variables, usually the number of kitchens, bedrooms, and bathrooms. Finally, the dataset has 23 nominal variables and 23 ordinal variables. The smallest is STREET, and the largest is NEIGHBORHOOD. Categorical variables usually refer to the environment, garage, material condition (Type of street: Gravel, Paved), and various ratings (Heating Condition: Excellent, Good, Fair). The dataset also contains PIDs, which are identification numbers assigned to each property (like an index) The dataset contains data on houses sold in Ames from 2006 to 2010, with a training dataset length of 1460 and a test dataset length of 1459.
+
+## Data Dictionary
+
+* `HouseStyle`:It means the different style of dwelling. Its data type is character.1.5Fin: One and one-half story/SFoyer: Split Foyer/SLvL: Split Level  
+* `SalePrice`: It means the house sale price. It is quantitative and numeric data.  
+* `LotArea`:It means lot size in square feet. It is quantitative data. It is numeric and its unit is square feet.  
+* `YearBuilt`:It means the year house built. It is quantitative and numeric data.  
+* `Street`: Type of road access to property. Its data type is character.  
+* `LotShape`: It means the general shape of property. Its data type is character.  
+* `Utilities`: Type of utilities available. Its data type is character.  
+* `LotConfig`:  It is the lot configuration. Its data type is character  
+* `OverallQual`: Rates the overall material and finish of the house.  
+* `OverallCond`: Rates the overall condition of the house. Its data type is character.  
+* `YearRemodAdd`: It means the remodel date (same as construction date if no remodeling or additions). Its data type is numeric.  
+* `BsmtQual`: Evaluates the height of the basement. Its data type is character.  
+* `BsmtCond`:Evaluates the general condition of the basement. Its data type is character.  
+* `LowQualFinSF`: Low quality finished square feet (all floors)  
+* `OpenPorchSF`: It means the open porch area in square feet. Its data type is numeric, and its unit is square feet.  
+* `GrLivArea`: It means the above ground living area square feet. Its data type is numeric.  
+* `1stFlrSF`: First Floor square feet. Its data type is numeric, and its unit is square feet.  
+* `2ndFlrSF`: Second floor square feet. Its data type is numeric, and its unit is square feet.  
+
+\newpage
+
+
+
+
+# Questions 1
+
+## Which housestyle should we recommend people to purchase in this area? 
+According to my 5 year experience in the US, I tend to choose 1 story house to recommend but we will see what we find in our analysis.
+
+
+# Methodologies
+
+```{r}
+kable(sort(table(data.test$HouseStyle),decreasing = TRUE), 
+           caption="House Styles",
+          col.names = c("HouseStyles" , "number"))
+```
+
+```{r,out.height="10in",out.width="5in"}
+ggplot(data = data.test, aes(x = HouseStyle, color = HouseStyle))+
+  geom_bar( aes(fill = HouseStyle))+
+theme(legend.position = "none")
+```
+
+First, I would like to figure out the most popular house style in this area. From the plots, we can see that 1 sotry and 2 stroy house style are most common in this area, which means people may have more choices to pick one desirable house among a large quantity of houses. Also, that means buyers may have hihger bargaining power since the supply of these two styles is higher.
+
+
+```{r,message=FALSE,warning=FALSE,out.height="10in",out.width="5in"}
+ggplot(data = data.test, aes(x = YearBuilt, y =LotArea)) + geom_point(alpha=.3) + geom_smooth(method = "lm", forumla = y ~ x, se = FALSE) + scale_x_log10() + scale_y_log10() +
+labs(y="Lot Area", x= "Year Built")+ facet_wrap(~HouseStyle)
+
+ggplot(data = data.test, aes(x = YearBuilt, y =SalePrice)) + geom_point(alpha=.3) + geom_smooth(method = "lm", forumla = y ~ x, se = FALSE) + scale_x_log10() + scale_y_log10() +
+labs(y="Sale Price", x= "Year Built")+ facet_wrap(~HouseStyle)
+
+```
+
+Second, we would like to check the depreciation rate of these two house styles. We want to know their ability to keep values. Before that, we want to eliminate the impact of house sizes on the sale price. From the first graph, we see that, House built in different years are about the same area. Thus, areas would not have large impact on the sale price. Then from the second plot, we can see tha,t for one story and two story houses, there is little difference in sale price for houses built in different years. Thus, these two houses’ styles are both good at keeping their value. 
+
+
+```{r,out.height="9.5in",out.width="4.5in"}
+data.test %>%
+group_by(HouseStyle) %>%
+summarise(avg = mean(LotArea),median = median(LotArea),
+std = sd(LotArea))
+
+ggplot(data = data.test, aes(x = HouseStyle, y = LotArea, color =HouseStyle))+
+  geom_boxplot(color = "black", aes(fill = HouseStyle))+
+  theme(legend.position = "none") +
+  labs(x="House Style", y = "Lot Area")
+```
+
+Later on, I would like to see if the living space for these two styles is large enough. From the boxplots, we can see that one-story and two-story house are the top 4 in terms of lot areas. Thus, I believe that the space for them should be enough.
+
+
+```{r,out.height="9.5in",out.width="4.5in"}
+data.test %>%
+group_by(HouseStyle) %>%
+summarise(avg = mean(SalePrice),median = median(SalePrice),
+std = sd(SalePrice))
+
+ggplot(data = data.test, aes(y= HouseStyle,x= SalePrice, color =HouseStyle))+
+  geom_boxplot(color = "black", aes(fill = HouseStyle))+
+  coord_flip()+
+  theme(legend.position = "none") +
+  labs(x="Sale Price", y="House Style")
+```
+
+In the last part, which is the most important part, AI would like to compare the price among these seven house styles. We can see that the average sale price for one story house is the second lowest. However, the average sale price for two story house is the second highest. 
+
+
+# Results and Conclusion
+
+In conclusion, after we compare the quantities, depreciation rate, lot areas and the sale price of different house styles, we found that the one story house should be the most cost-effective house for the reason that it has the second largest average area with the second lowest average sale price. Also, it has ability to hold its value over times. Besides, It has the largest quantities of houses to choose. Therefore, we recommend people to purchase one-story house.
+
+\newpage
+
+# Question 2
+## What factors can most effectively estimate the house sale price? 
+
+We believe that lotArea,overall condition, and year built may be the most important factors.
+
+# Methodologies
+
+## Data Visualization
+```{r}
+ggplot(data = data_dropna, aes(x = SalePrice)) +
+  geom_histogram(fill = "blue", binwidth = 50000)
+```
+
+The bar plot here shows that most of the house price in Ames is between 100,000 to 200,000, which is about 2000+ houses' sale price is inside this interval.
+
+```{r,message=FALSE,warning=FALSE,out.height="9.5in",out.width="4.5in"}
+corr <- cor(numericvars, use = "pairwise.complete.obs")
+
+corr_sort <- as.matrix(sort(corr[,"SalePrice"], decreasing = TRUE))
+corr05 <- names(which(apply(corr_sort, 1, function(x) abs(x) > 0.3)))
+corr <- corr[corr05, corr05]
+
+corrplot.mixed(corr, tl.col="black", tl.pos = "lt")
+```
+
+Here is the Heatmap about the correlation between each numerical variables and house price. The GrLivArea has the 
+highest correlation with house price, which is 0.59. The YearRemodAdd has the lowest correlation with house price, which is 0.35. Also, GrLivArea and TotRmsAbvGrd has strong relationship, which is above 0.8. It is easy to understand that more rooms above ground means more living area above ground. Therefore, the Heatmap is accurate. 
+
+```{r,message=FALSE,warning=FALSE,out.height="9.5in",out.width="4.5in"}
+ggplot(data = data_dropna, aes(x = GrLivArea, y = SalePrice)) +
+  geom_point() + stat_smooth()
+```
+
+The scatter plot and regression line proof that the correlation between GrLivArea and SalePrice is positive, with
+a slope about 0.59. However, when the area above group going really high, it has less effect to the house price, according to the graph.
+
+\newpage
+
+## Modeling
+
+
+
+
+## `Linear Regression`
+```{r}
+lm(SalePrice~., data = num.train) -> linear
+summary(linear)
+```
+
+From the summary of linear regression, there are 7 statistically significant variables: MSSubClass, LotArea, OverallQual, YearBuilt, X1stFlrSF, X2ndFlrSF and TotRmsAbvGrd. Moreover, the p-value for the linear regression is also < 0.05, which means the regression is significant.
+
+```{r,warning=FALSE}
+linear.predict = predict(linear, num.test)
+linearr2 <- cor(linear.predict,num.test$SalePrice)^2
+cat('R2 for Linear Regression:', linearr2)
+```
+
+
+## `Decision Tree`
+```{r,out.height="9.5in",out.width="4.5in"}
+tree(SalePrice~., data = num.train) -> tree.numtrain
+summary(tree.numtrain)
+plot(tree.numtrain) 
+text(tree.numtrain, pretty = 1)
+```
+
+From the plot of decision tree, it filters out 7 important variables. There are two variables that different from linear regression, which are: YearBuilt, OpenPorchSF. The built year from decision tree shows that the house with earlier built year has less sale price, which is conform to the common sense.
+
+```{r}
+decision_tree <-
+  decision_tree() %>%
+  set_engine('rpart') %>%
+  set_mode('regression')
+
+#Importance graph
+tree_fit <- fit(decision_tree, SalePrice ~., data = num.train)
+rpart.plot(tree_fit$fit)
+
+#Linear Regression with Tree's important variables
+
+lm(SalePrice~OverallQual+GrLivArea+X1stFlrSF+X2ndFlrSF+
+     YearBuilt+LotArea+OpenPorchSF, data = num.train) -> lm.tree
+summary(lm.tree)
+
+tree.predict = predict(lm.tree, num.test)
+#Prediction R2
+treer2 <- cor(tree.predict,num.test$SalePrice)^2
+cat('R2 for Desicion Tree:', treer2)
+```
+
+Here is the importance plot of decision tree. From the importance graph, we could see that GrLivArea has highest importance, which is 100%. The second important variable is X1stFlrSF with 47%.
+
+## `Best Subset`
+```{r}
+regsubsets(SalePrice~OverallQual+GrLivArea+X1stFlrSF+X2ndFlrSF+
+             YearBuilt+LotArea+OpenPorchSF, 
+           data = num.train)->num.train.best
+summary(num.train.best)
+
+which.max(num.train.best$adjr2)
+coef(num.train.best, 3)
+```
+
+We first use the best subset regression because we want to improve the out-of-sample accuracy of the regression model by eliminating the unnecessary predictors. From the output, we can see that the best subset selection with three predictors is OverallQulaity, GroundLivingArea, and LotArea. By comparison, the OpenPorchSF seems less important.
+
+## `Forward`
+```{r}
+#Forward
+regsubsets(SalePrice ~ OverallQual+GrLivArea+X1stFlrSF+X2ndFlrSF+
+             YearBuilt+LotArea+OpenPorchSF, 
+           data = num.train,method = "forward")->num.train.fwd
+summary(num.train.fwd)
+
+coef(num.train.fwd, 3)
+```
+
+We then use the forward stepwise regression and add variables that improve the model most, one at a time to meet the criteria. The seven predictors of forward stepwise subset selection are OverallQual, GrLivArea, X1stFlrSF, X2ndFlrSF, YearBuilt, LotArea, and OpenPorchSF. Thus, the forward stepwise subset selection we use is the same as the best subset selection.
+
+```{r}
+#Linear Regression with Subset's important variables
+lm(SalePrice~OverallQual+GrLivArea+LotArea, data = num.train) -> lm.subset
+summary(lm.subset)
+
+subset.predict = predict(lm.subset, num.test)
+
+#Prediction R2
+subsetr2 <- cor(subset.predict,num.test$SalePrice)^2
+cat('R2 for Linear Regression:', linearr2,
+    'R2 for Desicion Tree:', treer2,
+    'R2 for Best Subset:', subsetr2)
+```
+
+Finally, we made a Linear Regression with Subset's important variables. As shown in the output, the proportion of variability explained by the model is 44%.
+
+# Results and Conclusion
+
+According to the three models, the proportion of variability explained by the linear regression, decision tree, and subset selection, respectively, is 46%, 44%, and 42%. According to the above analysis, in the future, if people would like to purchase a house, overall quality, above ground living area, First floor area, second floor area, year bulit, and lot area are the top factors that they should consider. And if people have trouble finding the right price to purchase the house, they can use our regression model to estimate the price. 
+
+Sale Price = (4.252e+05) + (9.852e - 01)*Lot Area + (8.035e+03)*Overall Quality + (2.943e+02) * Year Built + (4.008e+01)* 1st Floor Squeard Feet + (3.593e+01)* 2st Floor Squared Feet
